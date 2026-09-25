@@ -4,6 +4,48 @@
 ACTION="${1}"
 shift 1
 
+find_network_device() {
+	local name="$1"
+	local section
+
+	uci show network | grep -E "^network\.[^\.]+\.name='$name'$" | sed "s/\.name='$name'$//" | while read section; do
+		[ "device" = "$(uci get "$section")" ] && echo "$section"
+	done
+}
+
+ensure_ap_bridge() {
+	local name="$1"
+	local section="$(find_network_device "$name" | head -n1)"
+
+	if [ -n "$section" ]; then
+		[ "bridge" = "$(uci get "$section.type")" ] || {
+			echo "host device $name is not a bridge!" >&2
+			return 1
+		}
+		return 0
+	fi
+
+	section="$(uci add network device)" || return 1
+	uci set "network.$section.name=$name"
+	uci set "network.$section.type=bridge"
+	uci commit network || return 1
+	/etc/init.d/network reload
+}
+
+ensure_ap_network() {
+	local name="$1"
+	local lan_address="$2"
+	local network="shadowrt-ap-$name"
+
+	if ! docker network inspect "$network" -f '{{.Name}}' >/dev/null 2>&1; then
+		eval $(ipcalc.sh "$lan_address") || return 1
+		docker network create -d bridge --subnet "$NETWORK/$PREFIX" --gateway "$IP" \
+			-o "com.docker.network.bridge.name=$name" \
+			-o "com.docker.network.bridge.inhibit_ipv4=true" "$network" || return 1
+	fi
+	ip link set "$name" up
+}
+
 do_install() {
 	local id="`uci get shadowrt.@instance[0].id 2>/dev/null`"
 	local data="`uci get shadowrt.@instance[0].data 2>/dev/null`"
@@ -15,6 +57,9 @@ do_install() {
 	local dns="`uci get shadowrt.@instance[0].dns 2>/dev/null`"
 	local dhcp_server=`uci get shadowrt.@instance[0].dhcp_server 2>/dev/null`
 	local ports="`uci get shadowrt.@instance[0].ports 2>/dev/null`"
+
+	local ap_bridge=`uci get shadowrt.@instance[0].ap_bridge 2>/dev/null`
+	local lan_address=`uci get shadowrt.@instance[0].lan_address 2>/dev/null`
 
 	if [ -z "$data" ]; then
 		echo "data path is empty!" >&2
@@ -33,6 +78,21 @@ do_install() {
 		fi
 	fi
 
+	if [ "$proto" = "dual" ]; then
+		if [ -z "$lan_address" ]; then
+			echo "dual mode requires LAN address!" >&2
+			exit 1
+		fi
+		case "$ap_bridge" in
+			""|*[!A-Za-z0-9_.-]*|????????????????*)
+				echo "dual mode requires a bridge name up to 15 characters!" >&2
+				exit 1
+				;;
+		esac
+		ensure_ap_bridge "$ap_bridge" || exit 1
+		ensure_ap_network "$ap_bridge" "$lan_address" || exit 1
+	fi
+
 	/etc/init.d/docker-lan start || {
 		echo "create docker-lan bridge failed!" >&2
 		exit 1
@@ -48,7 +108,7 @@ do_install() {
 		echo "WARNING: $data/$id already exists, may use old data." >&2
 	fi
 
-	local config="{\"id\":\"$id\",\"data\":\"$data\",\"mnt\":\"$mnt\",\"dind\":\"$dind\",\"proto\":\"$proto\",\"address\":\"$address\",\"gateway\":\"$gateway\",\"dns\":\"$dns\",\"dhcp_server\":\"$dhcp_server\",\"ports\":\"$ports\"}"
+	local config="{\"id\":\"$id\",\"data\":\"$data\",\"mnt\":\"$mnt\",\"dind\":\"$dind\",\"proto\":\"$proto\",\"address\":\"$address\",\"gateway\":\"$gateway\",\"dns\":\"$dns\",\"ap_bridge\":\"$ap_bridge\",\"lan_address\":\"$lan_address\",\"dhcp_server\":\"$dhcp_server\",\"ports\":\"$ports\"}"
 
 	local cmd="docker run --restart=unless-stopped -d \
 		--stop-signal SIGINT \
@@ -87,13 +147,16 @@ do_install() {
 		[ -n "$gateway" ] && cmd="$cmd -e IP_GATEWAY=$gateway"
 		[ -n "$dns" ] && cmd="$cmd -e 'IP_DNS=$dns'"
 	fi
+	if [ "$proto" = "dual" ]; then
+		cmd="$cmd -e 'LAN_ADDRESS=$lan_address'"
+	fi
 	[ "$dhcp_server" = "1" -o "$dhcp_server" = "on" ] && cmd="$cmd -e DHCP_SERVER=on"
 	if [ -n "$ports" ]; then
 		for p in $ports; do
 			cmd="$cmd -p $p:$p"
 		done
 	fi
-	if [ -n "$dns" ]; then
+	if [ "$proto" != "dual" -a -n "$dns" ]; then
 		for d in $dns; do
 			cmd="$cmd --dns $d"
 		done
@@ -114,7 +177,14 @@ do_install() {
 
 	echo "starting shadowrt instance $id..."
 	echo "$cmd"
-	eval "$cmd"
+	eval "$cmd" || return 1
+	if [ "$proto" = "dual" ]; then
+		docker network connect "shadowrt-ap-$ap_bridge" "$id" || {
+			echo "attach LAN bridge failed!" >&2
+			docker rm -f "$id" >/dev/null 2>&1
+			return 1
+		}
+	fi
 
 }
 
@@ -154,6 +224,8 @@ do_clone() {
 			-e 'address=$.address' \
 			-e 'gateway=$.gateway' \
 			-e 'dns=$.dns' \
+			-e 'ap_bridge=$.ap_bridge' \
+			-e 'lan_address=$.lan_address' \
 			-e 'dhcp_server=$.dhcp_server' \
 			-e 'ports=$.ports' | sed -e 's/; /\n/g' | sed -e 's/^export /set shadowrt.@instance[0]./g'
 		echo "commit shadowrt"

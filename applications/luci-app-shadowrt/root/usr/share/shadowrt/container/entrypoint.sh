@@ -1,10 +1,11 @@
 #!/bin/sh
 
 # env
-# IP_PROTO=dhcp|static
+# IP_PROTO=dhcp|static|dual
 # IP_ADDRESS=ipv4/prefixlen
 # IP_GATEWAY=ipv4
 # IP_DNS="dns1 dns2 ..."
+# LAN_ADDRESS=ipv4/prefixlen
 # DHCP_SERVER=on|off
 
 [ -s /rom/etc/openwrt_release ] || {

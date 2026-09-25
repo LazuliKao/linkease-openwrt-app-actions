@@ -4,6 +4,8 @@ CFG=$1
 
 IP_PROTO=dhcp
 IP_ADDRESS=
+NETWORK_MODE=single
+LAN_ADDRESS=
 
 [ -n "$CFG" ] || CFG=/etc/board.json
 
@@ -19,7 +21,12 @@ ucidef_set_timezone "CST-8"
 
 ucidef_set_ntpserver "0.cn.pool.ntp.org" "1.cn.pool.ntp.org" "2.cn.pool.ntp.org" "3.cn.pool.ntp.org"
 
-if [ "static" = "$IP_PROTO" -a -n "$IP_ADDRESS" ]; then
+if [ "dual" = "$NETWORK_MODE" -a -n "$LAN_ADDRESS" ]; then
+	eval $(ipcalc.sh "$LAN_ADDRESS")
+	ucidef_set_interface_wan "eth0" "dhcp"
+	ucidef_set_interface_lan "eth1"
+	ucidef_set_interface "lan" ipaddr "$IP" netmask "$NETMASK"
+elif [ "static" = "$IP_PROTO" -a -n "$IP_ADDRESS" ]; then
 	eval $(ipcalc.sh "$IP_ADDRESS")
 	ucidef_set_interface_lan "eth0"
 	ucidef_set_interface "lan" ipaddr "$IP" netmask "$NETMASK"

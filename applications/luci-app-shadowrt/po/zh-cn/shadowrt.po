@@ -40,6 +40,10 @@ msgstr ""
 msgid "DHCP client"
 msgstr ""
 
+#: luasrc/model/cbi/shadowrt/config.lua
+msgid "Dual WAN/LAN"
+msgstr "双 WAN/LAN"
+
 #: luasrc/model/cbi/shadowrt/config.lua:108
 msgid "DNS Servers"
 msgstr ""
@@ -94,6 +98,10 @@ msgstr ""
 msgid "IP Protocol"
 msgstr ""
 
+#: luasrc/model/cbi/shadowrt/config.lua
+msgid "Host AP Bridge"
+msgstr "宿主 AP 桥接"
+
 #: luasrc/controller/shadowrt.lua:7
 msgid "Install"
 msgstr ""
@@ -110,10 +118,23 @@ msgstr "操作说明"
 msgid "Loading view…"
 msgstr ""
 
+#: luasrc/model/cbi/shadowrt/config.lua
+msgid "LAN Address"
+msgstr "LAN 地址"
+
 #: luasrc/model/cbi/shadowrt/config.lua:108
 msgid ""
 "Multiple DNS servers can be separated by spaces, e.g., '8.8.8.8 8.8.4.4'"
 msgstr "多个 DNS 可以用空格隔开，例如‘8.8.8.8 8.8.4.4’"
+
+#: luasrc/model/cbi/shadowrt/config.lua
+msgid ""
+"Linux bridge name for the clone LAN, such as br-ap. A missing bridge is "
+"created automatically; associate Wi-Fi with this bridge in the host network "
+"configuration."
+msgstr ""
+"分身 LAN 使用的 Linux 桥接名称，例如 br-ap。桥接不存在时会自动创建；请在宿主"
+"网络配置中将 Wi-Fi 关联到该桥接。"
 
 #: luasrc/view/shadowrt/status.htm:338
 msgid "No instances yet, go to <a href=\"%s\">Install</a>."

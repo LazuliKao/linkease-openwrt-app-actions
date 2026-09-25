@@ -89,7 +89,14 @@ set_default_gw_dns()
 
 set_default_network()
 {
-	if [ "dhcp" != "$IP_PROTO" ]; then
+	if [ "dual" = "$IP_PROTO" ]; then
+		echo "pass LAN address to shadow: $LAN_ADDRESS" >&2
+		sed -i \
+			-e "s/^NETWORK_MODE=.*/NETWORK_MODE=dual/g" \
+			-e "s#^LAN_ADDRESS=.*#LAN_ADDRESS=$LAN_ADDRESS#g" \
+			"$PATCHROM/bin/board_detect"
+		[ "on" = "$DHCP_SERVER" ] && sed -i -e "s/^DHCP_SERVER=.*/DHCP_SERVER=1/g" "$PATCHROM/etc/uci-defaults/zzz-dockerenv"
+	elif [ "dhcp" != "$IP_PROTO" ]; then
 		# ip
 		local ip=$IP_ADDRESS
 		[ -z "$ip" ] && ip=`ip addr show dev eth0 | grep -m1 'inet ' | head -1 | sed -nE 's#.*inet ([0-9\.]*)/([0-9]*) .*#\1/\2#p'`
@@ -108,8 +115,8 @@ set_default_network()
 
 set_default_network
 
-export -n IP_PROTO IP_ADDRESS IP_GATEWAY IP_DNS DHCP_SERVER
-unset IP_PROTO IP_ADDRESS IP_GATEWAY IP_DNS DHCP_SERVER
+export -n IP_PROTO IP_ADDRESS IP_GATEWAY IP_DNS LAN_ADDRESS DHCP_SERVER
+unset IP_PROTO IP_ADDRESS IP_GATEWAY IP_DNS LAN_ADDRESS DHCP_SERVER
 
 umount $PATCHROM
 
