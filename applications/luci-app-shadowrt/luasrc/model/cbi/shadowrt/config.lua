@@ -94,36 +94,43 @@ o.default = 0
 o = s:option(ListValue, "proto", translate("IP Protocol"), translate("Select how this instance gets its IP address"))
 o:value("static", translate("Static address"))
 o:value("dhcp", translate("DHCP client"))
-o:value("dual", translate("Dual WAN/LAN"))
+o:value("dual", translate("DHCP WAN + LAN"))
+o:value("dual_static", translate("Static WAN + LAN"))
 o.default = "static"
 
 o = s:option(Value, "address", translate("IP Address").."<b>*</b>", translate("Format: xxx.xxx.xxx.xxx/xx"))
 o.rmempty = false
 o.datatype = "cidr4"
 o:depends("proto", "static")
+o:depends("proto", "dual_static")
 
 o = s:option(Value, "gateway", translate("Gateway"))
 o.datatype = "ip4addr(\"nomask\")"
 o:depends("proto", "static")
+o:depends("proto", "dual_static")
 
 o = s:option(Value, "dns", translate("DNS Servers"), translate("Multiple DNS servers can be separated by spaces, e.g., '8.8.8.8 8.8.4.4'"))
 o.datatype = "string"
 o:depends("proto", "static")
+o:depends("proto", "dual_static")
 
-o = s:option(Value, "ap_bridge", translate("Host AP Bridge").."<b>*</b>", translate("Linux bridge name for the clone LAN, such as br-ap. A missing bridge is created automatically; associate Wi-Fi with this bridge in the host network configuration."))
-o.rmempty = false
-o.datatype = "hostname"
-o:depends("proto", "dual")
 
 o = s:option(Value, "lan_address", translate("LAN Address").."<b>*</b>", translate("Format: xxx.xxx.xxx.xxx/xx"))
 o.rmempty = false
 o.datatype = "cidr4"
 o:depends("proto", "dual")
+o:depends("proto", "dual_static")
 
 o = s:option(Flag, "dhcp_server", translate("DHCP Server"), translate("Enable DHCP server on this instance"))
 o.default = 0
 o.rmempty = false
 o:depends("proto", "static")
+o:depends("proto", "dual")
+o:depends("proto", "dual_static")
+
+o = s:option(Flag, "wan_ipv4_input", translate("Allow IPv4 WAN Input"), translate("Allow all IPv4 connections from the WAN to this clone. This exposes its LuCI and every listening service to the upstream network."))
+o.default = 0
+o.rmempty = false
 o:depends("proto", "dual")
 
 return m

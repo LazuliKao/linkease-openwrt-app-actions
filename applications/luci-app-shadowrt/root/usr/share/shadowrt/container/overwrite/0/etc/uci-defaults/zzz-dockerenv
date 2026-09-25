@@ -13,12 +13,22 @@ EOF
 
 GATEWAY=
 DNS=
+WAN_GATEWAY=
+WAN_DNS=
 DHCP_SERVER=
+WAN_IPV4_INPUT=
 
 [ -n "$GATEWAY" ] && uci set network.lan.gateway="$GATEWAY"
 if [ -n "$DNS" ]; then
 	for dns in $DNS; do
 		uci add_list network.lan.dns="$dns"
+	done
+fi
+
+[ -n "$WAN_GATEWAY" ] && uci set network.wan.gateway="$WAN_GATEWAY"
+if [ -n "$WAN_DNS" ]; then
+	for dns in $WAN_DNS; do
+		uci add_list network.wan.dns="$dns"
 	done
 fi
 uci commit network
@@ -30,7 +40,18 @@ uci -q batch <<-EOF >/dev/null
 	del dhcp.lan.dhcpv6
 EOF
 
-if [ -z "$DHCP_SERVER" ]; then
+if [ "$WAN_IPV4_INPUT" = "1" -o "$WAN_IPV4_INPUT" = "on" ]; then
+	section="$(uci add firewall rule)"
+	uci set "firewall.$section.name=Allow-IPv4-WAN-Input"
+	uci set "firewall.$section.src=wan"
+	uci set "firewall.$section.family=ipv4"
+	uci set "firewall.$section.target=ACCEPT"
+	uci commit firewall
+fi
+
+if [ -n "$DHCP_SERVER" ]; then
+	uci -q delete dhcp.lan.ignore
+else
 	uci set dhcp.lan.ignore='1'
 fi
 uci commit dhcp

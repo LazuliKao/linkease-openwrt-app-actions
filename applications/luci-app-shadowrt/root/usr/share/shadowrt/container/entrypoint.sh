@@ -6,7 +6,11 @@
 # IP_GATEWAY=ipv4
 # IP_DNS="dns1 dns2 ..."
 # LAN_ADDRESS=ipv4/prefixlen
+# WAN_ADDRESS=ipv4/prefixlen
+# WAN_GATEWAY=ipv4
+# WAN_DNS="dns1 dns2 ..."
 # DHCP_SERVER=on|off
+# WAN_IPV4_INPUT=on|off
 
 [ -s /rom/etc/openwrt_release ] || {
 	echo "/rom is not a openwrt rootfs!" >&2

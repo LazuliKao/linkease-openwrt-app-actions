@@ -18,6 +18,7 @@
 				<th class="th cbi-section-table-cell" >ID</th>
 				<th class="th cbi-section-table-cell" ><%:Status%></th>
 				<th class="th cbi-section-table-cell" >IP</th>
+				<th class="th cbi-section-table-cell" >WAN IP</th>
 				<th class="th cbi-section-table-cell cbi-section-actions" id="cbi-section-table-head-actions"><em><%:Refreshing…%></em></th>
 			</tr>
 		</thead>
@@ -268,6 +269,7 @@
 			var rows = containers.map(function(container) {
 				var name = container.name;
 				var status = container.status;
+				var wanIp = container.wan_ip;
 				var ip = container.ip;
 				var row = document.createElement("tr");
 				row.className = "tr cbi-section-table-row";
@@ -307,6 +309,12 @@
 				ipCell.setAttribute("data-title", "IP");
 				ipCell.innerHTML = '<a href="http://' + ip + '" target="_blank">' + ip + '</a>';
 				row.appendChild(ipCell);
+
+				var wanIpCell = document.createElement("td");
+				wanIpCell.className = "td cbi-value-field";
+				wanIpCell.setAttribute("data-title", "WAN IP");
+				wanIpCell.innerHTML = wanIp ? '<a href="http://' + wanIp + '" target="_blank">' + wanIp + '</a>' : '-';
+				row.appendChild(wanIpCell);
 
 				var actionCell = document.createElement("td");
 				actionCell.className = "td cbi-section-table-cell nowrap cbi-section-actions";

@@ -32,6 +32,31 @@ ensure_ap_bridge() {
 	/etc/init.d/network reload
 }
 
+ensure_ap_interface() {
+	local bridge="$1"
+	local network="${bridge#br-}"
+
+	[ "$network" != "$bridge" ] || {
+		echo "dual mode bridge name must start with br-!" >&2
+		return 1
+	}
+	if uci get "network.$network" >/dev/null 2>&1; then
+		[ "interface" = "$(uci get "network.$network")" ] && \
+			[ "none" = "$(uci get "network.$network.proto")" ] && \
+			[ "$bridge" = "$(uci get "network.$network.device")" ] || {
+			echo "host network $network conflicts with bridge $bridge!" >&2
+			return 1
+		}
+		return 0
+	fi
+
+	uci set "network.$network=interface"
+	uci set "network.$network.proto=none"
+	uci set "network.$network.device=$bridge"
+	uci commit network || return 1
+	/etc/init.d/network reload
+}
+
 ensure_ap_network() {
 	local name="$1"
 	local lan_address="$2"
@@ -56,9 +81,10 @@ do_install() {
 	local gateway=`uci get shadowrt.@instance[0].gateway 2>/dev/null`
 	local dns="`uci get shadowrt.@instance[0].dns 2>/dev/null`"
 	local dhcp_server=`uci get shadowrt.@instance[0].dhcp_server 2>/dev/null`
+	local wan_ipv4_input=`uci get shadowrt.@instance[0].wan_ipv4_input 2>/dev/null`
 	local ports="`uci get shadowrt.@instance[0].ports 2>/dev/null`"
 
-	local ap_bridge=`uci get shadowrt.@instance[0].ap_bridge 2>/dev/null`
+	local ap_bridge="br-$id"
 	local lan_address=`uci get shadowrt.@instance[0].lan_address 2>/dev/null`
 
 	if [ -z "$data" ]; then
@@ -71,25 +97,26 @@ do_install() {
 		exit 1
 	}
 
-	if [ "$proto" = "static" ]; then
+	if [ "$proto" = "static" -o "$proto" = "dual_static" ]; then
 		if [ -z "$address" ]; then
-			echo "static ip requires address!" >&2
+			echo "static WAN requires address!" >&2
 			exit 1
 		fi
 	fi
 
-	if [ "$proto" = "dual" ]; then
+	if [ "$proto" = "dual" -o "$proto" = "dual_static" ]; then
 		if [ -z "$lan_address" ]; then
 			echo "dual mode requires LAN address!" >&2
 			exit 1
 		fi
 		case "$ap_bridge" in
-			""|*[!A-Za-z0-9_.-]*|????????????????*)
-				echo "dual mode requires a bridge name up to 15 characters!" >&2
-				exit 1
+			*[!A-Za-z0-9_.-]*|????????????????*)
+				echo "dual mode instance ID creates a bridge name longer than 15 characters!" >&2
+			exit 1
 				;;
 		esac
 		ensure_ap_bridge "$ap_bridge" || exit 1
+		ensure_ap_interface "$ap_bridge" || exit 1
 		ensure_ap_network "$ap_bridge" "$lan_address" || exit 1
 	fi
 
@@ -108,7 +135,7 @@ do_install() {
 		echo "WARNING: $data/$id already exists, may use old data." >&2
 	fi
 
-	local config="{\"id\":\"$id\",\"data\":\"$data\",\"mnt\":\"$mnt\",\"dind\":\"$dind\",\"proto\":\"$proto\",\"address\":\"$address\",\"gateway\":\"$gateway\",\"dns\":\"$dns\",\"ap_bridge\":\"$ap_bridge\",\"lan_address\":\"$lan_address\",\"dhcp_server\":\"$dhcp_server\",\"ports\":\"$ports\"}"
+	local config="{\"id\":\"$id\",\"data\":\"$data\",\"mnt\":\"$mnt\",\"dind\":\"$dind\",\"proto\":\"$proto\",\"address\":\"$address\",\"gateway\":\"$gateway\",\"dns\":\"$dns\",\"lan_address\":\"$lan_address\",\"wan_ipv4_input\":\"$wan_ipv4_input\",\"dhcp_server\":\"$dhcp_server\",\"ports\":\"$ports\"}"
 
 	local cmd="docker run --restart=unless-stopped -d \
 		--stop-signal SIGINT \
@@ -147,9 +174,15 @@ do_install() {
 		[ -n "$gateway" ] && cmd="$cmd -e IP_GATEWAY=$gateway"
 		[ -n "$dns" ] && cmd="$cmd -e 'IP_DNS=$dns'"
 	fi
-	if [ "$proto" = "dual" ]; then
+	if [ "$proto" = "dual" -o "$proto" = "dual_static" ]; then
 		cmd="$cmd -e 'LAN_ADDRESS=$lan_address'"
 	fi
+	if [ "$proto" = "dual_static" ]; then
+		cmd="$cmd -e 'WAN_ADDRESS=$address'"
+		[ -n "$gateway" ] && cmd="$cmd -e WAN_GATEWAY=$gateway"
+		[ -n "$dns" ] && cmd="$cmd -e 'WAN_DNS=$dns'"
+	fi
+	[ "$proto" = "dual" -a \( "$wan_ipv4_input" = "1" -o "$wan_ipv4_input" = "on" \) ] && cmd="$cmd -e WAN_IPV4_INPUT=on"
 	[ "$dhcp_server" = "1" -o "$dhcp_server" = "on" ] && cmd="$cmd -e DHCP_SERVER=on"
 	if [ -n "$ports" ]; then
 		for p in $ports; do
@@ -178,7 +211,7 @@ do_install() {
 	echo "starting shadowrt instance $id..."
 	echo "$cmd"
 	eval "$cmd" || return 1
-	if [ "$proto" = "dual" ]; then
+	if [ "$proto" = "dual" -o "$proto" = "dual_static" ]; then
 		docker network connect "shadowrt-ap-$ap_bridge" "$id" || {
 			echo "attach LAN bridge failed!" >&2
 			docker rm -f "$id" >/dev/null 2>&1
@@ -189,18 +222,20 @@ do_install() {
 }
 
 do_ls() {
-	local name state ip
+	local name state ip wan_ip
 
 	echo "["
 	docker ps -a -f 'label=creator=shadowrt' --format '{{.Names}} {{.State}}' | sort -n | while read name state; do
 		ip=
+		wan_ip=
 		if [ "$state" = "running" ]; then
-			ip=`docker exec "$name" ip addr show dev br-lan | grep -m1 'inet ' | head -1 | sed -nE 's#.*inet ([0-9\.]*)/([0-9]*) .*#\1#p'`
+			ip=`docker exec "$name" ip addr show dev br-lan | grep -m1 'inet ' | head -1 | sed -nE 's#.*inet ([0-9\.]+)/([0-9]*) .*#\1#p'`
+			wan_ip=`docker exec "$name" ubus call network.interface.wan status 2>/dev/null | jsonfilter -e '@["ipv4-address"][0].address'`
 			if [ -z "$ip" ]; then
 				docker exec "$name" test -e /etc/openwrt_release -a ! -e /rom/note || state="starting"
 			fi
 		fi
-		echo '{"name":"'"$name"'","status":"'"$state"'","ip":"'"$ip"'"},'
+		echo '{"name":"'"$name"'","status":"'"$state"'","ip":"'"$ip"'","wan_ip":"'"$wan_ip"'"},'
 		#docker container inspect -f '{"name":"'"$name"'","status":"'"$state"'","config":{{index .Config.Labels "com.shadowrt.config"}},"ip":"'"$ip"'"},' "$name"
 	done | head -c -2
 	echo ""
@@ -224,8 +259,8 @@ do_clone() {
 			-e 'address=$.address' \
 			-e 'gateway=$.gateway' \
 			-e 'dns=$.dns' \
-			-e 'ap_bridge=$.ap_bridge' \
 			-e 'lan_address=$.lan_address' \
+			-e 'wan_ipv4_input=$.wan_ipv4_input' \
 			-e 'dhcp_server=$.dhcp_server' \
 			-e 'ports=$.ports' | sed -e 's/; /\n/g' | sed -e 's/^export /set shadowrt.@instance[0]./g'
 		echo "commit shadowrt"

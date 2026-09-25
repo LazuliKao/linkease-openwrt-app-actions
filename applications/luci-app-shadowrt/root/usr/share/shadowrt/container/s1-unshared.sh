@@ -87,15 +87,31 @@ set_default_gw_dns()
 	sed -i -e "s/^GATEWAY=.*/GATEWAY=$gw/g" -e "s/^DNS=.*/DNS='$dns'/g" "$PATCHROM/etc/uci-defaults/zzz-dockerenv"
 }
 
+set_default_wan_gw_dns()
+{
+	local gw=$1
+	local dns="$2"
+	echo "pass WAN gateway/dns to shadow: $gw/$dns" >&2
+	sed -i -e "s/^WAN_GATEWAY=.*/WAN_GATEWAY=$gw/g" -e "s/^WAN_DNS=.*/WAN_DNS='$dns'/g" "$PATCHROM/etc/uci-defaults/zzz-dockerenv"
+}
+
 set_default_network()
 {
-	if [ "dual" = "$IP_PROTO" ]; then
+	if [ "dual" = "$IP_PROTO" -o "dual_static" = "$IP_PROTO" ]; then
 		echo "pass LAN address to shadow: $LAN_ADDRESS" >&2
 		sed -i \
 			-e "s/^NETWORK_MODE=.*/NETWORK_MODE=dual/g" \
 			-e "s#^LAN_ADDRESS=.*#LAN_ADDRESS=$LAN_ADDRESS#g" \
 			"$PATCHROM/bin/board_detect"
+		if [ "dual_static" = "$IP_PROTO" ]; then
+			sed -i \
+				-e "s/^WAN_PROTO=.*/WAN_PROTO=static/g" \
+				-e "s#^WAN_ADDRESS=.*#WAN_ADDRESS=$WAN_ADDRESS#g" \
+				"$PATCHROM/bin/board_detect"
+			set_default_wan_gw_dns "$WAN_GATEWAY" "$WAN_DNS"
+		fi
 		[ "on" = "$DHCP_SERVER" ] && sed -i -e "s/^DHCP_SERVER=.*/DHCP_SERVER=1/g" "$PATCHROM/etc/uci-defaults/zzz-dockerenv"
+		[ "on" = "$WAN_IPV4_INPUT" ] && sed -i -e "s/^WAN_IPV4_INPUT=.*/WAN_IPV4_INPUT=on/g" "$PATCHROM/etc/uci-defaults/zzz-dockerenv"
 	elif [ "dhcp" != "$IP_PROTO" ]; then
 		# ip
 		local ip=$IP_ADDRESS
@@ -115,8 +131,8 @@ set_default_network()
 
 set_default_network
 
-export -n IP_PROTO IP_ADDRESS IP_GATEWAY IP_DNS LAN_ADDRESS DHCP_SERVER
-unset IP_PROTO IP_ADDRESS IP_GATEWAY IP_DNS LAN_ADDRESS DHCP_SERVER
+export -n IP_PROTO IP_ADDRESS IP_GATEWAY IP_DNS LAN_ADDRESS WAN_ADDRESS WAN_GATEWAY WAN_DNS WAN_IPV4_INPUT DHCP_SERVER
+unset IP_PROTO IP_ADDRESS IP_GATEWAY IP_DNS LAN_ADDRESS WAN_ADDRESS WAN_GATEWAY WAN_DNS WAN_IPV4_INPUT DHCP_SERVER
 
 umount $PATCHROM
 
