@@ -4,6 +4,8 @@
 ACTION="${1}"
 shift 1
 
+. /usr/lib/shadowrt/handoff.sh
+
 find_network_device() {
 	local name="$1"
 	local section
@@ -13,62 +15,68 @@ find_network_device() {
 	done
 }
 
-ensure_ap_bridge() {
-	local name="$1"
-	local section="$(find_network_device "$name" | head -n1)"
+ensure_host_network() {
+	local id="$1"
+	local section="$(find_network_device "$SHADOWRT_HOST_BRIDGE" | head -n1)"
+	local changed=0
 
 	if [ -n "$section" ]; then
 		[ "bridge" = "$(uci get "$section.type")" ] || {
-			echo "host device $name is not a bridge!" >&2
+			echo "host device $SHADOWRT_HOST_BRIDGE is not a bridge!" >&2
 			return 1
 		}
-		return 0
+	else
+		section="$(uci add network device)" || return 1
+		uci set "network.$section.name=$SHADOWRT_HOST_BRIDGE"
+		uci set "network.$section.type=bridge"
+		changed=1
 	fi
 
-	section="$(uci add network device)" || return 1
-	uci set "network.$section.name=$name"
-	uci set "network.$section.type=bridge"
-	uci commit network || return 1
+	if uci get "network.$id" >/dev/null 2>&1; then
+		[ "interface" = "$(uci get "network.$id")" ] && \
+			[ "none" = "$(uci get "network.$id.proto")" ] && \
+			[ "$SHADOWRT_HOST_BRIDGE" = "$(uci get "network.$id.device")" ] || {
+			echo "host network $id conflicts with bridge $SHADOWRT_HOST_BRIDGE!" >&2
+			return 1
+		}
+	else
+		uci set "network.$id=interface"
+		uci set "network.$id.proto=none"
+		uci set "network.$id.device=$SHADOWRT_HOST_BRIDGE"
+		changed=1
+	fi
+
+	uci get "$section.ports" | grep -wq "$SHADOWRT_HOST_VETH" || {
+		uci add_list "$section.ports=$SHADOWRT_HOST_VETH"
+		changed=1
+	}
+	[ -d "/sys/class/net/$SHADOWRT_HOST_BRIDGE" ] || changed=1
+	if [ "$changed" != 0 ]; then
+		uci commit network || return 1
+	fi
 	/etc/init.d/network reload
+	/sbin/ifup "$id" || return 1
 }
 
-ensure_ap_interface() {
-	local bridge="$1"
-	local network="${bridge#br-}"
+ensure_handoff_network() {
+	/etc/init.d/shadowrt-handoff start || return 1
+	docker network inspect "$SHADOWRT_DOCKER_NETWORK" -f '{{.Name}}' >/dev/null 2>&1
+}
 
-	[ "$network" != "$bridge" ] || {
-		echo "dual mode bridge name must start with br-!" >&2
+migrate_legacy_network() {
+	local legacy="shadowrt-ap-$SHADOWRT_HOST_BRIDGE"
+	local bridge containers
+
+	[ "$legacy" = "$SHADOWRT_DOCKER_NETWORK" ] && return 0
+	docker network inspect "$legacy" -f '{{.Name}}' >/dev/null 2>&1 || return 0
+	bridge="$(docker network inspect "$legacy" -f '{{index .Options "com.docker.network.bridge.name"}}')"
+	[ "$bridge" = "$SHADOWRT_HOST_BRIDGE" ] || return 0
+	containers="$(docker network inspect "$legacy" -f '{{range $id, $container := .Containers}}{{$container.Name}} {{end}}')"
+	[ -z "$containers" ] || {
+		echo "legacy network $legacy is still used by: $containers" >&2
 		return 1
 	}
-	if uci get "network.$network" >/dev/null 2>&1; then
-		[ "interface" = "$(uci get "network.$network")" ] && \
-			[ "none" = "$(uci get "network.$network.proto")" ] && \
-			[ "$bridge" = "$(uci get "network.$network.device")" ] || {
-			echo "host network $network conflicts with bridge $bridge!" >&2
-			return 1
-		}
-		return 0
-	fi
-
-	uci set "network.$network=interface"
-	uci set "network.$network.proto=none"
-	uci set "network.$network.device=$bridge"
-	uci commit network || return 1
-	/etc/init.d/network reload
-}
-
-ensure_ap_network() {
-	local name="$1"
-	local lan_address="$2"
-	local network="shadowrt-ap-$name"
-
-	if ! docker network inspect "$network" -f '{{.Name}}' >/dev/null 2>&1; then
-		eval $(ipcalc.sh "$lan_address") || return 1
-		docker network create -d bridge --subnet "$NETWORK/$PREFIX" --gateway "$IP" \
-			-o "com.docker.network.bridge.name=$name" \
-			-o "com.docker.network.bridge.inhibit_ipv4=true" "$network" || return 1
-	fi
-	ip link set "$name" up
+	docker network rm "$legacy"
 }
 
 do_install() {
@@ -84,7 +92,6 @@ do_install() {
 	local wan_ipv4_input=`uci get shadowrt.@instance[0].wan_ipv4_input 2>/dev/null`
 	local ports="`uci get shadowrt.@instance[0].ports 2>/dev/null`"
 
-	local ap_bridge="br-$id"
 	local lan_address=`uci get shadowrt.@instance[0].lan_address 2>/dev/null`
 
 	if [ -z "$data" ]; then
@@ -109,15 +116,11 @@ do_install() {
 			echo "dual mode requires LAN address!" >&2
 			exit 1
 		fi
-		case "$ap_bridge" in
-			*[!A-Za-z0-9_.-]*|????????????????*)
-				echo "dual mode instance ID creates a bridge name longer than 15 characters!" >&2
+		shadowrt_handoff_names "$id" || exit 1
+		ensure_handoff_network || {
+			echo "create shadowrt LAN handoff failed!" >&2
 			exit 1
-				;;
-		esac
-		ensure_ap_bridge "$ap_bridge" || exit 1
-		ensure_ap_interface "$ap_bridge" || exit 1
-		ensure_ap_network "$ap_bridge" "$lan_address" || exit 1
+		}
 	fi
 
 	/etc/init.d/docker-lan start || {
@@ -161,6 +164,9 @@ do_install() {
 		--hostname '$id' \
 		--label 'com.shadowrt.config=$config' \
 		-v '$data/$id/overlay:/overlay:rw' "
+	if [ "$proto" = "dual" -o "$proto" = "dual_static" ]; then
+		cmd="$cmd --label com.shadowrt.network-topology=veth-handoff"
+	fi
 
 	if [ "$dind" = "1" -o "$dind" = "on" ]; then
 		cmd="$cmd -e DIND=on"
@@ -207,12 +213,18 @@ do_install() {
 	echo "stopping existing container..."
 	docker stop "$id" >/dev/null 2>&1
 	docker rm -f "$id"
+	if [ "$proto" = "dual" -o "$proto" = "dual_static" ]; then
+		migrate_legacy_network || return 1
+	fi
+	if [ "$proto" = "dual" -o "$proto" = "dual_static" ]; then
+		ensure_host_network "$id" || return 1
+	fi
 
 	echo "starting shadowrt instance $id..."
 	echo "$cmd"
 	eval "$cmd" || return 1
 	if [ "$proto" = "dual" -o "$proto" = "dual_static" ]; then
-		docker network connect "shadowrt-ap-$ap_bridge" "$id" || {
+		docker network connect "$SHADOWRT_DOCKER_NETWORK" "$id" || {
 			echo "attach LAN bridge failed!" >&2
 			docker rm -f "$id" >/dev/null 2>&1
 			return 1

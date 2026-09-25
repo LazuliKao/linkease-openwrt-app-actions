@@ -1,0 +1,5 @@
+#!/bin/sh
+
+/etc/init.d/shadowrt-handoff enable
+/etc/init.d/shadowrt-handoff start
+rm -f /etc/uci-defaults/shadowrt-handoff

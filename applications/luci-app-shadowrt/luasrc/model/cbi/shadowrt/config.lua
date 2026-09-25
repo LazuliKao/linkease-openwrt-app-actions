@@ -70,9 +70,12 @@ s = m:section(TypedSection, "instance", translate("Configuration"),
 s.addremove=false
 s.anonymous=true
 
-o = s:option(Value, "id", "ID".."<b>*</b>", translate("This ID will be used as hostname and container name, only letters, numbers, underscore and hyphen are allowed. Same ID will overwrite existing instance, please avoid using the name as other Docker containers"))
+o = s:option(Value, "id", "ID".."<b>*</b>", translate("This ID will be used as hostname and container name, only letters, numbers, underscore and hyphen are allowed. Same ID will overwrite existing instance, please avoid using the name as other Docker containers. Dual-mode bridge and veth names are derived from this ID."))
 o.rmempty = false
-o.datatype = "hostname"
+o.datatype = "string"
+o.validate = function(self, value)
+	return value:match("^[A-Za-z0-9][A-Za-z0-9_-]*$") and value or nil, translate("Only letters, numbers, underscore and hyphen are allowed")
+end
 
 o = s:option(Value, "data", translate("Data Directory").."<b>*</b>", translate("Will create sub-directory by ID under the selected path, so the path can be shared among multiple instances. Please select a file system with good Linux compatibility, such as ext4, btrfs, zfs, etc."))
 o.rmempty = false

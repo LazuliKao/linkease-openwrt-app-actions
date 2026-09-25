@@ -1,0 +1,14 @@
+#!/bin/sh
+
+. /usr/lib/shadowrt/handoff.sh
+
+id="$(uci -q get shadowrt.@instance[0].id)"
+proto="$(uci -q get shadowrt.@instance[0].proto)"
+case "$proto" in
+	dual|dual_static) ;;
+	*) exit 0 ;;
+esac
+shadowrt_handoff_names "$id" || exit 0
+[ "$ACTION" = add -a "$DEVICENAME" = "$SHADOWRT_HOST_BRIDGE" ] || exit 0
+sleep 1
+/etc/init.d/shadowrt-handoff start
