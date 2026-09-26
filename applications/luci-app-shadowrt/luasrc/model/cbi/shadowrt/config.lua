@@ -124,6 +124,27 @@ o.datatype = "cidr4"
 o:depends("proto", "dual")
 o:depends("proto", "dual_static")
 
+o = s:option(ListValue, "lan_ipv6_mode", translate("LAN IPv6 Mode"), translate("Controls IPv6 advertisements and DHCPv6 on the clone LAN. Server routes a delegated prefix; relay forwards upstream IPv6 control traffic."))
+o:value("disabled", translate("Disabled"))
+o:value("server", translate("Server (delegated prefix)"))
+o:value("relay", translate("Relay"))
+o.default = "server"
+o:depends("proto", "dual")
+o:depends("proto", "dual_static")
+
+o = s:option(ListValue, "wan6_mode", translate("WAN6 Uplink Mode"), translate("Controls how the clone obtains IPv6 from its WAN. Relay master is only valid with LAN IPv6 relay."))
+o:value("disabled", translate("Disabled"))
+o:value("dhcpv6", translate("DHCPv6 client"))
+o:value("relay", translate("Relay master"))
+o.default = "dhcpv6"
+o:depends("proto", "dual")
+o:depends("proto", "dual_static")
+
+o = s:option(Flag, "nat6", translate("NAT66"), translate("Masquerade LAN IPv6 traffic on WAN6. Use this when the WAN does not delegate an IPv6 prefix."))
+o.default = 0
+o:depends("lan_ipv6_mode", "server")
+
+
 o = s:option(Flag, "dhcp_server", translate("DHCP Server"), translate("Enable DHCP server on this instance"))
 o.default = 0
 o.rmempty = false

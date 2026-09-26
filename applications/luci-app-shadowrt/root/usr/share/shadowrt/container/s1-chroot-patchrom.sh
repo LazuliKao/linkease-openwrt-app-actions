@@ -8,7 +8,7 @@ ADD_SERVICES=
 
 for service in adb-enablemodem appfilter gpio_switch hd-idle \
 	kmods kmods-unload lcdsimple led lm-sensors luci-fan \
-	mdadm modemmanager odhcpd smartd sysfixtime sysfsutils sysntpd \
+	mdadm modemmanager smartd sysfixtime sysfsutils sysntpd \
 	tuning_net umount usbmode usbmuxd wan_drop zprintk zram \
 	$ADD_SERVICES \
 	log

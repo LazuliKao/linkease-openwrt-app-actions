@@ -17,6 +17,9 @@ WAN_GATEWAY=
 WAN_DNS=
 DHCP_SERVER=
 WAN_IPV4_INPUT=
+LAN_IPV6_MODE=server
+WAN6_MODE=dhcpv6
+NAT6=
 
 [ -n "$GATEWAY" ] && uci set network.lan.gateway="$GATEWAY"
 if [ -n "$DNS" ]; then
@@ -33,12 +36,59 @@ if [ -n "$WAN_DNS" ]; then
 fi
 uci commit network
 
-uci -q batch <<-EOF >/dev/null
-	del dhcp.lan.ra
-	del dhcp.lan.ra_slaac
-	del dhcp.lan.ra_flags
-	del dhcp.lan.dhcpv6
-EOF
+
+if [ "$IP_PROTO" = "dual" -o "$IP_PROTO" = "dual_static" ]; then
+	case "$WAN6_MODE" in
+		disabled) uci -q delete network.wan6 ;;
+		dhcpv6|relay)
+			uci set network.wan6=interface
+			uci set network.wan6.device='eth0'
+			uci set network.wan6.proto='dhcpv6'
+			;;
+	esac
+	case "$LAN_IPV6_MODE" in
+		disabled)
+			uci set network.lan.ip6assign='0'
+			uci set dhcp.lan.ra='disabled'
+			uci set dhcp.lan.dhcpv6='disabled'
+			uci set dhcp.lan.ndp='disabled'
+			;;
+		server)
+			uci set network.lan.ip6assign='64'
+			uci set dhcp.lan.ra='server'
+			uci set dhcp.lan.dhcpv6='server'
+			uci -q delete dhcp.lan.ndp
+			;;
+		relay)
+			uci -q delete network.lan.ip6assign
+			uci set dhcp.lan.ra='relay'
+			uci set dhcp.lan.dhcpv6='relay'
+			uci set dhcp.lan.ndp='relay'
+			uci set dhcp.wan6.master='1'
+			uci set dhcp.wan6.ra='relay'
+			uci set dhcp.wan6.dhcpv6='relay'
+			uci set dhcp.wan6.ndp='relay'
+			;;
+	esac
+	if [ "$LAN_IPV6_MODE" != relay ]; then
+		uci -q delete dhcp.wan6.master
+		uci -q delete dhcp.wan6.ra
+		uci -q delete dhcp.wan6.dhcpv6
+		uci -q delete dhcp.wan6.ndp
+	fi
+	if [ "$NAT6" = "on" ]; then
+		uci set firewall.@zone[1].masq6='1'
+		uci set firewall.@defaults[0].fullcone6='0'
+		uci set network.wan6.sourcefilter='0'
+	else
+		uci -q delete firewall.@zone[1].masq6
+		uci -q delete network.wan6.sourcefilter
+	fi
+	uci commit network
+	uci commit firewall
+	/etc/init.d/firewall reload
+	/etc/init.d/odhcpd enable
+fi
 
 if [ "$WAN_IPV4_INPUT" = "1" -o "$WAN_IPV4_INPUT" = "on" ]; then
 	section="$(uci add firewall rule)"
@@ -56,4 +106,5 @@ else
 fi
 uci commit dhcp
 
+[ "$IP_PROTO" = "dual" -o "$IP_PROTO" = "dual_static" ] && /etc/init.d/odhcpd restart
 exit 0

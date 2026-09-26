@@ -53,8 +53,8 @@ ensure_host_network() {
 	[ -d "/sys/class/net/$SHADOWRT_HOST_BRIDGE" ] || changed=1
 	if [ "$changed" != 0 ]; then
 		uci commit network || return 1
+		/etc/init.d/network reload || return 1
 	fi
-	/etc/init.d/network reload
 	/sbin/ifup "$id" || return 1
 }
 
@@ -93,6 +93,11 @@ do_install() {
 	local ports="`uci get shadowrt.@instance[0].ports 2>/dev/null`"
 
 	local lan_address=`uci get shadowrt.@instance[0].lan_address 2>/dev/null`
+	local lan_ipv6_mode=`uci get shadowrt.@instance[0].lan_ipv6_mode 2>/dev/null`
+	local wan6_mode=`uci get shadowrt.@instance[0].wan6_mode 2>/dev/null`
+	local nat6=`uci get shadowrt.@instance[0].nat6 2>/dev/null`
+	[ -n "$lan_ipv6_mode" ] || lan_ipv6_mode=server
+	[ -n "$wan6_mode" ] || wan6_mode=dhcpv6
 
 	if [ -z "$data" ]; then
 		echo "data path is empty!" >&2
@@ -116,7 +121,11 @@ do_install() {
 			echo "dual mode requires LAN address!" >&2
 			exit 1
 		fi
+		case "$lan_ipv6_mode" in disabled|server|relay) ;; *) echo "invalid LAN IPv6 mode!" >&2; exit 1 ;; esac
+		case "$wan6_mode" in disabled|dhcpv6|relay) ;; *) echo "invalid WAN6 mode!" >&2; exit 1 ;; esac
+		[ "$lan_ipv6_mode" != relay -o "$wan6_mode" = relay ] || { echo "LAN IPv6 relay requires WAN6 relay master!" >&2; exit 1; }
 		shadowrt_handoff_names "$id" || exit 1
+		ensure_host_network "$id" || exit 1
 		ensure_handoff_network || {
 			echo "create shadowrt LAN handoff failed!" >&2
 			exit 1
@@ -138,7 +147,7 @@ do_install() {
 		echo "WARNING: $data/$id already exists, may use old data." >&2
 	fi
 
-	local config="{\"id\":\"$id\",\"data\":\"$data\",\"mnt\":\"$mnt\",\"dind\":\"$dind\",\"proto\":\"$proto\",\"address\":\"$address\",\"gateway\":\"$gateway\",\"dns\":\"$dns\",\"lan_address\":\"$lan_address\",\"wan_ipv4_input\":\"$wan_ipv4_input\",\"dhcp_server\":\"$dhcp_server\",\"ports\":\"$ports\"}"
+	local config="{\"id\":\"$id\",\"data\":\"$data\",\"mnt\":\"$mnt\",\"dind\":\"$dind\",\"proto\":\"$proto\",\"address\":\"$address\",\"gateway\":\"$gateway\",\"dns\":\"$dns\",\"lan_address\":\"$lan_address\",\"lan_ipv6_mode\":\"$lan_ipv6_mode\",\"wan6_mode\":\"$wan6_mode\",\"nat6\":\"$nat6\",\"wan_ipv4_input\":\"$wan_ipv4_input\",\"dhcp_server\":\"$dhcp_server\",\"ports\":\"$ports\"}"
 
 	local cmd="docker run --restart=unless-stopped -d \
 		--stop-signal SIGINT \
@@ -182,6 +191,8 @@ do_install() {
 	fi
 	if [ "$proto" = "dual" -o "$proto" = "dual_static" ]; then
 		cmd="$cmd -e 'LAN_ADDRESS=$lan_address'"
+		cmd="$cmd -e LAN_IPV6_MODE=$lan_ipv6_mode -e WAN6_MODE=$wan6_mode"
+		[ "$nat6" = "1" -o "$nat6" = "on" ] && cmd="$cmd -e NAT6=on"
 	fi
 	if [ "$proto" = "dual_static" ]; then
 		cmd="$cmd -e 'WAN_ADDRESS=$address'"
@@ -215,9 +226,6 @@ do_install() {
 	docker rm -f "$id"
 	if [ "$proto" = "dual" -o "$proto" = "dual_static" ]; then
 		migrate_legacy_network || return 1
-	fi
-	if [ "$proto" = "dual" -o "$proto" = "dual_static" ]; then
-		ensure_host_network "$id" || return 1
 	fi
 
 	echo "starting shadowrt instance $id..."
@@ -272,6 +280,9 @@ do_clone() {
 			-e 'gateway=$.gateway' \
 			-e 'dns=$.dns' \
 			-e 'lan_address=$.lan_address' \
+			-e 'lan_ipv6_mode=$.lan_ipv6_mode' \
+			-e 'wan6_mode=$.wan6_mode' \
+			-e 'nat6=$.nat6' \
 			-e 'wan_ipv4_input=$.wan_ipv4_input' \
 			-e 'dhcp_server=$.dhcp_server' \
 			-e 'ports=$.ports' | sed -e 's/; /\n/g' | sed -e 's/^export /set shadowrt.@instance[0]./g'

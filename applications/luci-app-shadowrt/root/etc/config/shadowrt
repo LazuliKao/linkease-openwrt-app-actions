@@ -10,4 +10,7 @@ config instance
 	option 'gateway' '192.168.100.1'
 	option 'dns' '192.168.100.1'
 	option 'dhcp_server' '0'
+	option 'lan_ipv6_mode' 'server'
+	option 'wan6_mode' 'dhcpv6'
+	option 'nat6' '0'
 

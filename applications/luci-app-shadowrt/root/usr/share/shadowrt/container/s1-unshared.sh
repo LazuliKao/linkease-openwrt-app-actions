@@ -112,6 +112,11 @@ set_default_network()
 		fi
 		[ "on" = "$DHCP_SERVER" ] && sed -i -e "s/^DHCP_SERVER=.*/DHCP_SERVER=1/g" "$PATCHROM/etc/uci-defaults/zzz-dockerenv"
 		[ "on" = "$WAN_IPV4_INPUT" ] && sed -i -e "s/^WAN_IPV4_INPUT=.*/WAN_IPV4_INPUT=on/g" "$PATCHROM/etc/uci-defaults/zzz-dockerenv"
+		sed -i \
+			-e "s/^LAN_IPV6_MODE=.*/LAN_IPV6_MODE=$LAN_IPV6_MODE/g" \
+			-e "s/^WAN6_MODE=.*/WAN6_MODE=$WAN6_MODE/g" \
+			-e "s/^NAT6=.*/NAT6=$NAT6/g" \
+			"$PATCHROM/etc/uci-defaults/zzz-dockerenv"
 	elif [ "dhcp" != "$IP_PROTO" ]; then
 		# ip
 		local ip=$IP_ADDRESS
@@ -130,6 +135,11 @@ set_default_network()
 }
 
 set_default_network
+
+# dnsmasq runs in a procd jail. Preserve entropy devices needed for DHCP startup.
+if [ -f "$PATCHROM/etc/init.d/dnsmasq" ] && ! grep -q 'procd_add_jail_mount /dev/urandom /dev/random' "$PATCHROM/etc/init.d/dnsmasq"; then
+	sed -i '/^[[:space:]]*procd_close_instance$/i\procd_add_jail_mount /dev/urandom /dev/random' "$PATCHROM/etc/init.d/dnsmasq"
+fi
 
 export -n IP_PROTO IP_ADDRESS IP_GATEWAY IP_DNS LAN_ADDRESS WAN_ADDRESS WAN_GATEWAY WAN_DNS WAN_IPV4_INPUT DHCP_SERVER
 unset IP_PROTO IP_ADDRESS IP_GATEWAY IP_DNS LAN_ADDRESS WAN_ADDRESS WAN_GATEWAY WAN_DNS WAN_IPV4_INPUT DHCP_SERVER
