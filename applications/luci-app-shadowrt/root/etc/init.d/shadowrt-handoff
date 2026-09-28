@@ -1,6 +1,6 @@
 #!/bin/sh /etc/rc.common
 
-START=15
+START=99
 
 . /usr/lib/shadowrt/handoff.sh
 
@@ -17,21 +17,62 @@ load_dual_instance() {
 	shadowrt_handoff_names "$SHADOWRT_INSTANCE_ID"
 }
 
-reconcile() {
-	load_dual_instance || return 0
-	shadowrt_handoff_links
+wait_for_docker() {
+	local attempt=0
+
+	while [ "$attempt" -lt 30 ]; do
+		docker info >/dev/null 2>&1 && return 0
+		attempt=$((attempt + 1))
+		sleep 1
+	done
+	logger -t shadowrt-handoff "dockerd did not become ready"
+	return 1
 }
 
-boot() {
-	reconcile
-}
-
-start() {
-	reconcile || return 1
-	/etc/init.d/dockerd running || return 0
+ensure_docker_network() {
 	docker network inspect "$SHADOWRT_DOCKER_NETWORK" -f '{{.Name}}' >/dev/null 2>&1 && return 0
 	docker network create -d bridge \
 		-o com.docker.network.bridge.inhibit_ipv4=true \
 		-o "com.docker.network.bridge.name=$SHADOWRT_DOCKER_BRIDGE" \
 		"$SHADOWRT_DOCKER_NETWORK"
+}
+
+restore_container() {
+	local restart="$1"
+	local attached running
+
+	docker container inspect "$SHADOWRT_INSTANCE_ID" >/dev/null 2>&1 || return 0
+	attached="$(docker inspect -f '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}' "$SHADOWRT_INSTANCE_ID" | grep -Fx "$SHADOWRT_DOCKER_NETWORK")"
+	if [ -z "$attached" ]; then
+		docker network connect "$SHADOWRT_DOCKER_NETWORK" "$SHADOWRT_INSTANCE_ID" || return 1
+		restart=1
+	fi
+	running="$(docker inspect -f '{{.State.Running}}' "$SHADOWRT_INSTANCE_ID")"
+	if [ "$running" = true ]; then
+		if [ "$restart" = 1 ]; then
+			docker restart "$SHADOWRT_INSTANCE_ID" || return 1
+		fi
+		return 0
+	fi
+	docker start "$SHADOWRT_INSTANCE_ID"
+}
+
+reconcile() {
+	load_dual_instance || return 0
+	shadowrt_handoff_links || return 1
+	shadowrt_handoff_attach_host_bridge
+}
+
+boot() {
+	reconcile || return 1
+	wait_for_docker || return 1
+	ensure_docker_network || return 1
+	restore_container 1
+}
+
+start() {
+	reconcile || return 1
+	docker info >/dev/null 2>&1 || return 0
+	ensure_docker_network || return 1
+	restore_container 0
 }

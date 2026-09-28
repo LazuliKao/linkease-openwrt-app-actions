@@ -53,3 +53,12 @@ shadowrt_handoff_links() {
 	ip link set "$SHADOWRT_HOST_VETH" up || return 1
 	ip link set "$SHADOWRT_DOCKER_VETH" up || return 1
 }
+
+shadowrt_handoff_attach_host_bridge() {
+	local master
+
+	[ -d "/sys/class/net/$SHADOWRT_HOST_BRIDGE" ] || return 0
+	master="$(basename "$(readlink -f "/sys/class/net/$SHADOWRT_HOST_VETH/master")")"
+	[ "$master" = "$SHADOWRT_HOST_BRIDGE" ] || \
+		ip link set "$SHADOWRT_HOST_VETH" master "$SHADOWRT_HOST_BRIDGE"
+}
